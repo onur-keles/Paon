@@ -7,12 +7,12 @@ The code for the neuron/layer is to be published.
 # Citation
 If this repository is helpful to you in any way, please cite the following work:
 ```
-@misc{keles2024paon,
-      title={PAON: A New Neuron Model using Pad\'e Approximants}, 
-      author={Onur Keleş and A. Murat Tekalp},
-      year={2024},
-      eprint={2403.11791},
-      archivePrefix={arXiv},
-      primaryClass={eess.IV}
+@INPROCEEDINGS{keles2024paon,
+  author={Keleş, Onur and Tekalp, A. Murat},
+  booktitle={2024 IEEE International Conference on Image Processing (ICIP)}, 
+  title={Paon: A New Neuron Model Using Pad\'e Approximants}, 
+  year={2024},
+  pages={207-213},
+  doi={10.1109/ICIP51287.2024.10648214}
 }
 ```
