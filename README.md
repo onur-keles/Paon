@@ -96,7 +96,7 @@ deform_dict = {
     'kernel_size': 5,                  # Convolution kernel size
     'degrees': (1,1),                  # (M, N): Polynomial degrees [M/N]
     'paon_type': "s",                  # "s" for Paon-S, "a" for Paon-A
-    'bias_range': -1,                  # Allowable maximum shift; bias_range<=0 => No limited, bias_range>0 => Limited
+    'bias_range': -1,                  # Allowable maximum shift; bias_range<=0 => Limited by max(h, w)/4, bias_range>0 => Limited by bias_range
     'bias_round': False,               # Whether round the shift values or not
     'conv_padding_mode': "replicate",  # Padding for convolution
     'shift_padding_mode': "replicate", # Padding for convolution that learns the shifts
