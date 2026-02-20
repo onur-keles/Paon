@@ -108,6 +108,7 @@ class Shifter(nn.Module):
 
         # Round the biases to the integer values
         if self.bias_round: cb = torch.round(cb)
+        cb = cb.to(dtype=x.dtype)
 
         # Rearrange the input so that every channel can be shifted
         x = x.permute(1, 0, 2, 3)
@@ -120,7 +121,8 @@ class Shifter(nn.Module):
         b_r = cb[:,1:] / (h/2)
 
         # Create the transformation matrix
-        aff_mtx = torch.eye(3).to(x.device)
+        # aff_mtx = torch.eye(3).to(x.device)
+        aff_mtx = torch.eye(3, device=x.device, dtype=x.dtype)
         aff_mtx = aff_mtx.repeat(c, 1, 1)
         aff_mtx[..., 0, 2:3] += a_r
         aff_mtx[..., 1, 2:3] += b_r
@@ -178,6 +180,7 @@ class PaLaBase(nn.Module):
         
         # w0 term
         self.w0 = nn.Parameter(torch.Tensor(out_ch))
+        self.bias_dim = None
         
         # Paon type
         # =========================================
@@ -201,7 +204,7 @@ class PaLaBase(nn.Module):
         # If it is the denomanator convolution, then it should be absolute.
         if self.degrees[n] == 1: 
             return torch.abs(x) if n == 1 else x
-        
+
         # Sum the different degrees
         o = self.degrees[n]
         ch = self.out_ch
@@ -228,13 +231,19 @@ class PaLaBase(nn.Module):
         return x.sum(dim=2), x[:, :, :o-1].sum(dim=2)
     
     # ______________________________________________________________________________________________________________________
+    #
+    def _bias_view(self, bias, ref):
+        bias_shape = [1] * ref.ndim
+        bias_shape[self.bias_dim] = -1
+        return bias.view(*bias_shape)
+
+    # ______________________________________________________________________________________________________________________
     # 
     def prepare_for_div_a(self, pm_tuple, pm_bias, qn_tuple, degrees):
-        view_dims = (1, 1, -1) if qn_tuple.ndim == 3 else (1, -1, 1, 1)
         if pm_tuple is None:
-            return pm_bias.view(*view_dims), torch.ones_like(qn_tuple) + qn_tuple
-        return pm_tuple + pm_bias.view(*view_dims), torch.ones_like(qn_tuple) + qn_tuple
-        
+            return self._bias_view(pm_bias, qn_tuple), torch.ones_like(qn_tuple) + qn_tuple
+        return pm_tuple + self._bias_view(pm_bias, qn_tuple), torch.ones_like(qn_tuple) + qn_tuple
+
     # ______________________________________________________________________________________________________________________
     # 
     def prepare_for_div_s(self, pm_tuple, pm_bias, qn_tuple, degrees):
@@ -246,17 +255,14 @@ class PaLaBase(nn.Module):
             # here the bias term serves as the multiplier for each channel for qN, we can discard it assuming that if any 
             # amplification is necessary, the gradient descent should modify the weights accordingly.
             if degrees[0] == 0:
-                view_dims = (1, 1, -1) if qN.ndim == 3 else (1, -1, 1, 1)
-                return qN*pm_bias.view(*view_dims), qN**2 + torch.ones_like(qN) # qN*pm_bias, ...
-            
+                return qN*self._bias_view(pm_bias, qN), qN**2 + torch.ones_like(qN) # qN*pm_bias, ...
+
             if degrees[0] == 1:
-                view_dims = (1, 1, -1) if pm_tuple.ndim == 3 else (1, -1, 1, 1)
-                pM = pm_tuple + pm_bias.view(*view_dims)
-                return qN*pM + pm_bias.view(*view_dims), qN**2 + torch.ones_like(qN)
+                pM = pm_tuple + self._bias_view(pm_bias, pm_tuple)
+                return qN*pM + self._bias_view(pm_bias, pm_tuple), qN**2 + torch.ones_like(qN)
             
-            view_dims = (1, 1, -1) if pm_tuple[0].ndim == 3 else (1, -1, 1, 1)
-            pM = pm_tuple[0] + pm_bias.view(*view_dims)
-            pm = pm_tuple[1] + pm_bias.view(*view_dims)
+            pM = pm_tuple[0] + self._bias_view(pm_bias, pm_tuple[0])
+            pm = pm_tuple[1] + self._bias_view(pm_bias, pm_tuple[1])
             return qN*pM + pm, qN**2 + torch.ones_like(qN)
         else:
             qN = qn_tuple[0] + torch.ones_like(qn_tuple[0])
@@ -266,17 +272,14 @@ class PaLaBase(nn.Module):
             # here the bias term serves as the multiplier for each channel for qN, we can discard it assuming that if any 
             # amplification is necessary, the gradient descent should modify the weights accordingly.
             if degrees[0] == 0:
-                view_dims = (1, 1, -1) if qN.ndim == 3 else (1, -1, 1, 1)
-                return qN*pm_bias.view(*view_dims), qN**2 + qn**2 # qN*pm_bias, ...
+                return qN*self._bias_view(pm_bias, qN), qN**2 + qn**2 # qN*pm_bias, ...
             
             if degrees[0] == 1:
-                view_dims = (1, 1, -1) if pm_tuple.ndim == 3 else (1, -1, 1, 1)
-                pM = pm_tuple + pm_bias.view(*view_dims)
-                return qN*pM + qn*pm_bias.view(*view_dims), qN**2 + qn**2 # ... + qn*pm_bias, ...
-            
-            view_dims = (1, 1, -1) if pm_tuple[0].ndim == 3 else (1, -1, 1, 1)
-            pM = pm_tuple[0] + pm_bias.view(*view_dims)
-            pm = pm_tuple[1] + pm_bias.view(*view_dims)
+                pM = pm_tuple + self._bias_view(pm_bias, pm_tuple)
+                return qN*pM + qn*self._bias_view(pm_bias, pm_tuple), qN**2 + qn**2 # ... + qn*pm_bias, ...
+
+            pM = pm_tuple[0] + self._bias_view(pm_bias, pm_tuple[0])
+            pm = pm_tuple[1] + self._bias_view(pm_bias, pm_tuple[1])
             return qN*pM + qn*pm, qN**2 + qn**2
 
     # ______________________________________________________________________________________________________________________
@@ -288,10 +291,11 @@ class PaLaBase(nn.Module):
         # If we don't have a denominator (N = 0), then directly return the Taylor series expansion, which is the first 
         # entity in the x_m tuple. We also know that both M and N cannot be 0 at the same time
         if x_n is None: 
-            return x_m + self.w0
+            return x_m + self._bias_view(self.w0, x_m)
         
         # Prepare the polynomials for Paon-(A/S)
         x_m, x_n = self.prepare_for_div(x_m, self.w0, x_n, self.degrees)
+        
         return torch.div(x_m, x_n)
     
     # ______________________________________________________________________________________________________________________
@@ -332,6 +336,9 @@ class PaLaLinear(PaLaBase):
         # Get polynomial generators
         if degrees[0] > 0: self.get_m_poly = nn.Parameter(torch.Tensor(degrees[0], in_ch, out_ch))
         if degrees[1] > 0: self.get_n_poly = nn.Parameter(torch.Tensor(degrees[1], in_ch, out_ch))
+        
+        # Get the bias dimension
+        self.bias_dim = -1
 
         self.reset_parameters()
 
@@ -359,12 +366,24 @@ class PaLaLinear(PaLaBase):
     # ______________________________________________________________________________________________________________________
     # 
     def prepare_polynomial(self, x, n, get_poly, offset=None):
+        # Get the original input shape except the final dimension
+        orig_shape = x.shape[:-1]
+
         # Prepare the input
-        x = torch.cat([x[:, None]**k for k in range(1, self.degrees[n]+1)], dim=1)
+        x = x.reshape(-1, self.in_ch)
+        x = torch.stack([x**k for k in range(1, self.degrees[n]+1)], dim=1)
 
         # Perform matrix multiplication
-        x = torch.einsum('bgi,gio->bgo', x, get_poly)
-        return self.after_poly(x, n)
+        x = torch.einsum('...gi,gio->...go', x, get_poly)
+        
+        # Prepare for and calculate after_poly
+        x = x.reshape(-1, self.degrees[n]*self.out_ch)
+        x = self.after_poly(x, n)
+        
+        # Return the proper output
+        if isinstance(x, tuple):
+            return tuple([t.reshape(*orig_shape, self.out_ch) for t in x])
+        return x.reshape(*orig_shape, self.out_ch)
     
     # ______________________________________________________________________________________________________________________
     #
@@ -472,6 +491,9 @@ class PaLaConv2d(PaLaBase):
         else:
             raise NotImplementedError
         
+        # Get the bias dimension
+        self.bias_dim = 1
+        
         # Reset parameters
         self.reset_parameters()
 
@@ -492,11 +514,7 @@ class PaLaConv2d(PaLaBase):
         degree = self.degrees[n]
 
         # Determine the number of channels and groups
-        in_ch = degree*self.in_ch
-        if self.paon_type == "a" and n == 0:
-            out_ch, groups = self.out_ch, 1
-        else:
-            out_ch, groups = degree*self.out_ch, degree
+        in_ch, out_ch, groups = degree*self.in_ch, degree*self.out_ch, degree
 
         # Convolution
         conv = nn.Conv2d(
@@ -512,11 +530,7 @@ class PaLaConv2d(PaLaBase):
         degree = self.degrees[n]
 
         # Determine the number of channels and groups
-        in_ch = degree*self.in_ch
-        if self.paon_type == "a" and n == 0:
-            out_ch, p_groups, d_groups = self.out_ch, 1, self.out_ch
-        else:
-            out_ch, p_groups, d_groups = degree*self.out_ch, degree, degree*self.out_ch
+        in_ch, out_ch, p_groups, d_groups = degree*self.in_ch, degree*self.out_ch, degree, degree*self.out_ch
 
         # Convolution
         pconv = nn.Conv2d(in_ch, out_ch, 1, groups=p_groups, bias=False)
@@ -684,11 +698,7 @@ class PaLaConvTranspose2d(PaLaConv2d):
         degree = self.degrees[n]
 
         # Determine the number of channels and groups
-        in_ch = degree*self.in_ch
-        if self.paon_type == "a" and n == 0:
-            out_ch, groups = self.out_ch, 1
-        else:
-            out_ch, groups = degree*self.out_ch, degree
+        in_ch, out_ch, groups = degree*self.in_ch, degree*self.out_ch, degree
             
         conv = nn.ConvTranspose2d(
             in_ch, out_ch, self.kernel_size, stride=self.stride, bias=False, groups=groups, 
@@ -703,21 +713,60 @@ class PaLaConvTranspose2d(PaLaConv2d):
         degree = self.degrees[n]
 
         # Determine the number of channels and groups
-        in_ch = degree*self.in_ch
-        if self.paon_type == "a" and n == 0:
-            out_ch, p_groups, d_groups = self.out_ch, 1, self.out_ch
-        else:
-            out_ch, p_groups, d_groups = degree*self.out_ch, degree, degree*self.out_ch
+        in_ch, out_ch, p_groups, d_groups = degree*self.in_ch, degree*self.out_ch, degree, degree*self.out_ch
 
         pconv = nn.Conv2d(in_ch, out_ch, 1, groups=p_groups, bias=False)
         dconv = nn.ConvTranspose2d(
-            in_ch, out_ch, self.kernel_size, stride=self.stride, bias=False, groups=d_groups, 
+            out_ch, out_ch, self.kernel_size, stride=self.stride, bias=False, groups=d_groups, 
             padding_mode=self.conv_padding_mode, padding=self.padding, output_padding=self.output_padding
         )
         if self.wnorm:
             dconv = weight_norm(dconv)
         return nn.Sequential(pconv, dconv)
     
+    # ______________________________________________________________________________________________________________________
+    # 
+    def reset_parameters(self):
+        # w0 term initialization
+        fan_in = self.in_ch * self.kernel_size**2 # written from the original source code
+        bound  = 1 / math.sqrt(fan_in)
+        nn.init.uniform_(self.w0, -bound, bound)
+
+        # Depth-wise separable convolution
+        if self.separable:
+            for k, degree in enumerate(self.degrees):
+                # If the degree is 0, then there is nothing to initialize
+                if degree == 0:
+                    continue
+
+                if k == 0:
+                    for layer in self.get_m_poly:
+                        nn.init.kaiming_uniform_(layer.weight, a=0, mode='fan_in', nonlinearity='conv2d')
+                        if degree > 1:
+                            nn.init.zeros_(layer.weight[:, self.out_ch:])
+                else:
+                    for layer in self.get_n_poly:
+                        # nn.init.kaiming_uniform_(layer.weight, a=0, mode='fan_in', nonlinearity='conv2d')
+                        nn.init.zeros_(layer.weight)
+        # Custom convolution
+        else:
+            for k, degree in enumerate(self.degrees):
+                # If the degree is 0, then there is nothing to initialize
+                if degree == 0:
+                    continue
+
+                if k == 0:
+                    nn.init.kaiming_uniform_(self.get_m_poly.weight, a=0, mode='fan_in', nonlinearity='conv2d')
+                    if degree > 1:
+                        nn.init.zeros_(self.get_m_poly.weight[:, self.out_ch:])
+                else:
+                    # nn.init.kaiming_uniform_(self.n_conv.weight, a=0, mode='fan_in', nonlinearity='conv2d')
+                    nn.init.zeros_(self.get_n_poly.weight)
+
+        # Shifter
+        if not isinstance(self.shifter, nn.Identity): 
+            self.shifter.reset_parameters()
+
     # ______________________________________________________________________________________________________________________
     # 
     def __repr__(self):
@@ -813,7 +862,11 @@ class DeformOffset(nn.Module):
         h, w = offset.shape[2:]
         
         # Limit the offsets so that they cannot go out of the feature vector
-        grid_x, grid_y = torch.meshgrid(torch.arange(w, device=dvc), torch.arange(h, device=dvc), indexing='xy')
+        grid_x, grid_y = torch.meshgrid(
+            torch.arange(w, device=dvc, dtype=offset_r.dtype), 
+            torch.arange(h, device=dvc, dtype=offset_r.dtype), 
+            indexing='xy'
+        )
         offset[:, 0::2] = torch.clamp(offset_r[:, 0::2], -grid_y, h - grid_y)
         offset[:, 1::2] = torch.clamp(offset_r[:, 1::2], -grid_x, w - grid_x)
 
@@ -928,6 +981,9 @@ class PaLaDeformConv2d(PaLaBase):
             if degrees[1] > 0: self.get_n_poly = self.get_depth_separable_conv(1)
         else:
             raise NotImplementedError
+        
+        # Get the bias dimension
+        self.bias_dim = 1
 
         # Polynomial preparation changes for separable convolution
         if separable:
@@ -960,11 +1016,7 @@ class PaLaDeformConv2d(PaLaBase):
         degree = self.degrees[n]
 
         # Determine the number of channels and groups
-        in_ch = degree*self.in_ch
-        if self.paon_type == "a" and n == 0:
-            out_ch, groups = self.out_ch, 1
-        else:
-            out_ch, groups = degree*self.out_ch, degree
+        in_ch, out_ch, groups = degree*self.in_ch, degree*self.out_ch, degree
 
         # Convolution
         conv = DeformConv2d(
@@ -979,11 +1031,7 @@ class PaLaDeformConv2d(PaLaBase):
         degree = self.degrees[n]
 
         # Determine the number of channels and groups
-        in_ch = degree*self.in_ch
-        if self.paon_type == "a" and n == 0:
-            out_ch, p_groups, d_groups = self.out_ch, 1, self.out_ch
-        else:
-            out_ch, p_groups, d_groups = degree*self.out_ch, degree, degree*self.out_ch
+        in_ch, out_ch, p_groups, d_groups = degree*self.in_ch, degree*self.out_ch, degree, degree*self.out_ch
 
         # Convolution
         pconv = nn.Conv2d(in_ch, out_ch, 1, groups=p_groups, bias=False)
