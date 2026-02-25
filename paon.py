@@ -758,7 +758,7 @@ class PaLaConvTranspose2d(PaLaConv2d):
                 if k == 0:
                     nn.init.kaiming_uniform_(self.get_m_poly.weight, a=0, mode='fan_in', nonlinearity='conv2d')
                     if degree > 1:
-                        nn.init.zeros_(self.get_m_poly.weight[self.in_ch:]) # [:, self.out_ch:] # 
+                        nn.init.zeros_(self.get_m_poly.weight[self.in_ch:]) # [:, self.out_ch:] #
                 else:
                     # nn.init.kaiming_uniform_(self.n_conv.weight, a=0, mode='fan_in', nonlinearity='conv2d')
                     nn.init.zeros_(self.get_n_poly.weight)
